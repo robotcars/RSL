@@ -37,7 +37,7 @@ class AnalizadorApp:
         self.ventana.grid_rowconfigure(10, weight=1) # configurar fila 10 para que se expanda proporcionalmente
         #-------------------------------------------
         #almacen
-        self.archivoRuta = None # ruta del archivo seleccionado
+        self.archivoRuta = [] # lista del archivo seleccionado
         # almacen para analisis de DOI
         self.doi_repetidos = {}
         self.doi_unicos = {}    
@@ -59,7 +59,28 @@ class AnalizadorApp:
         self.textoSelec.config(bg="#f0f0f0") # configurar color
         self.textoSelec.config(justify="left") # alinear texto a la izquierda
         self.textoSelec.grid(row=2, column=0, columnspan=3, padx=10, pady=5, sticky="w") # posicionar la etiqueta en la ventana
-                
+        
+        #lista de archivos seleccionados
+        self.archivosFra = tk.Frame(self.ventana ,bg="#f0f0f0") # frame para contener la lista de archivos
+        self.archivosFra.grid(row=3, column=0, columnspan=3, padx=10, pady=5, sticky="nsew") # posicionar el frame en la ventana
+        self.archivosFra.grid_columnconfigure(0, weight=1) # configurar columnas del frame para que se expandan proporcionalmente
+        self.archivosFra.grid_rowconfigure(1, weight=1) # configurar filas del frame para que se expandan proporcionalmente
+        
+        #boton para limpiar seleccion
+        self.botonLimpiar = tk.Button(self.archivosFra, text="Limpiar Seleccion", command=self.limpiarSeleccion) # boton para limpiar seleccion
+        self.botonLimpiar.grid(row=2, column=0, padx=10, pady=5, sticky="w") # posicionar el boton en el frame
+        
+        #etiqueta para la lista de archivos
+        self.labelArchivos = tk.Label(self.archivosFra, text="Archivos seleccionados (0):") # etiqueta para la lista de archivos
+        self.labelArchivos.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w") #posicionar la etiqueta en el frame
+        
+        # cuadro de lista para mostrar archivos seleccionados
+        self.listaArchivos = tk.Listbox(self.archivosFra, height=4, bg="#ffffff")
+        self.listaArchivos.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
+        
+        self.archivosFra.grid_columnconfigure(0, weight=1)
+        self.archivosFra.grid_rowconfigure(1, weight=1)
+        
         # boton para seleccionar archivo
         self.botonSeleccionar = tk.Button(self.ventana, text="Seleccionar Archivo", command= self.seleccionArchivo) # boton para seleccionar archivo
         self.botonSeleccionar.grid(row=1, column=0, padx=10, pady=5, sticky="w") # posicionar el boton en la ventana
@@ -120,6 +141,11 @@ class AnalizadorApp:
         self.resultadosTexto = tk.Text(self.ventana, height=10, width=60) # cuadro de texto para mostrar resultados
         self.resultadosTexto.grid(row=8, column=0, columnspan=3, padx=10, pady=10, sticky="nsew") # posicionar el cuadro de texto en la ventana
         self.resultadosTexto.config(state=tk.DISABLED) # deshabilitar el cuadro de texto para evitar edicion manual
+        
+        #boton para exportar resultados
+        self.botonExportar = tk.Button(self.ventana, text="Exportar Resultados", command= self.exportarResultados) # boton para exportar resultados
+        self.botonExportar.grid(row=9, column=0, columnspan=3, padx=10, pady=5, sticky="nsew") # posicionar el boton en la ventana
+        self.botonExportar.config(state=tk.DISABLED) # deshabilitar el boton de exportar resultados hasta que haya resultados
         #-------------------------------------------
         
     '''
@@ -193,7 +219,8 @@ class AnalizadorApp:
         
         
         #guardar archivo csv
-        self.archivoRuta = rutaSalida # almacenar la ruta del archivo csv generado
+        self.archivoRuta = [rutaSalida] # almacenar la ruta del archivo csv generado
+        self.arctualizarListaArchivos() # actualizar lista de archivos seleccionados
         self.textoSelec.config(text=f"Archivo seleccionado: {rutaSalida}") # actualizar etiqueta con la ruta del archivo seleccionado
         #mensaje de exito
         messagebox.showinfo("Salio bien", f"Archivo CSV creado:\n\n{nomArchiCSV}")
@@ -250,7 +277,8 @@ class AnalizadorApp:
                 escrito.writerow(entrada) # escribir fila en el archivo csv
         
         #guardar archivo csv
-        self.archivoRuta = rutaCsv
+        self.archivoRuta = [rutaCsv]
+        self.arctualizarListaArchivos() # actualizar lista de archivos seleccionados
         self.textoSelec.config(text=f"Archivo seleccionado: {rutaCsv}")
         #mensaje de exito
         messagebox.showinfo("Salio bien", f"Archivo CSV creado:\n\n{nombreArchivo[:-4]}.csv")
@@ -259,14 +287,149 @@ class AnalizadorApp:
         
             
             
+    #funcion para seleccionar varios archivos CSV
+    def seleccionArchivos(self):
+        archivoRuta = filedialog.askopenfilename(title="Archivo CSV", filetypes=[("Archivos CSV","*.csv")], initialdir=".") # abrir cuadro de dialogo para seleccionar archivos
+        if archivoRuta:
+            if isinstance(self.archivoRuta, list):
+               self.archivoRuta.append(archivoRuta) # agregar la ruta del archivo seleccionado a la lista
+            else:
+                self.archivoRuta = [self.archivoRuta, archivoRuta] # convertir a lista y agregar el nuevo archivo
+            self.arctualizarListaArchivos() # actualizar la lista de archivos en la interfaz grafica
+            print(f"Archivo seleccionado: {archivoRuta}") # imprimir ruta del archivo seleccionado
+            self.bloqueoboton("CSV") # bloquear botones de conversion
             
+    #limpiar seleccion de archivos
+    def limpiarSeleccion(self):
+        self.archivoRuta = []
+        self.arctualizarListaArchivos()
+        self.botonConvertirRI.config(state=tk.NORMAL) # habilitar el cuadro de texto para edicion
+        self.botonConvertirBub.config(state=tk.NORMAL) # habilitar el cuadro de texto para edicion
+        self.botonSeleccionar.config(state=tk.NORMAL) # habilitar el cuadro de texto para edicion
+        self.resultadosTexto.delete(1.0, tk.END) # limpiar el cuadro de texto
+        self.resultadosTexto.config(state=tk.DISABLED) # deshabilitar el cuadro de texto para evitar edicion manual
+        self.botonExportar.config(state=tk.DISABLED) # deshabilitar boton de exportar
+        print("Seleccion de archivos limpiada.") # imprimir mensaje de limpieza de seleccion
+        
+    #funcion para actualizar la lista de archivos seleccionados en la interfaz grafica
+    def arctualizarListaArchivos(self):
+        self.listaArchivos.delete(0, tk.END) # limpiar la lista de archivos
+        self.labelArchivos.config(text=f"Archivos seleccionados ({len(self.archivoRuta)}):") # actualizar etiqueta con el numero de archivos seleccionados
+        
+        for ruta in self.archivoRuta:
+            nombreArchivo = os.path.basename(ruta) # obtener nombre del archivo
+            self.listaArchivos.insert(tk.END, nombreArchivo) # agregar nombre del archivo a la lista
     
+    #funcion para analizar varios archivos seleccionados
+    def analizarMultiple(self, archivosRuta, poCampos= None):
+        if poCampos is None:
+            poCampos = []
+            
+        self.doi_repetidos = {}
+        self.doi_unicos = {}
+        agrupado = defaultdict(lambda: {'titulos': [], 'archivos': []})
+        
+        #procesar cada archivo
+        for idx, archivosRuta in enumerate(archivosRuta):
+            nombreArchivo = os.path.basename(archivosRuta)
+            
+            # leer archivo csv
+            with open(archivosRuta, 'r', encoding='utf-8') as archivoCSV: # abrir archivo csv
+                leer = cs.DictReader(archivoCSV) # leer archivo csv como diccionario
+                campos = leer.fieldnames or [] # obtener nombres de los campos
+                
+                campoDoi = None
+               
+                for c in campos:
+                    c_limpio = c.strip().lower()
+                    if c_limpio == 'doi' or c_limpio == 'do' or 'doi' in c_limpio:
+                        campoDoi = c
+                        break
+                if not campoDoi:
+                    messagebox.showerror("Error", f"No se encontro un campo DOI en el archivo CSV: {nombreArchivo}.")
+                    continue
+                
+                campoTitulo = None
+                for candidato in poCampos:
+                    for c in campos:
+                        c_limpio = c.strip()
+                        if c_limpio.lower() == candidato.lower() or candidato.lower() in c_limpio.lower():
+                            campoTitulo = c
+                            break
+                    if campoTitulo:
+                        break
+                
+                #campo titulo por defecto
+                if not campoTitulo:
+                    campoTitulo = campos[0] if campos else None
+                
+                #leer filas y agrupar por doi
+                for fila in leer:
+                    doi = fila.get(campoDoi, '').strip()
+                    titulo = fila.get(campoTitulo, '').strip() if campoTitulo else 'Titulo Desconocido'
+                    
+                    if doi:
+                        agrupado[doi]['titulos'].append(titulo)
+                        agrupado[doi]['archivos'].append(nombreArchivo)
+                        
+        #separar doi unicos y repetidos
+        for doi, datos in agrupado.items():
+            if len(datos['titulos']) > 1:
+                self.doi_repetidos[doi] = {'titulos': datos['titulos'], 'archivos': datos['archivos']}
+            else:
+                self.doi_unicos[doi] = {'titulo': datos['titulos'][0], 'archivo': datos['archivos'][0]}
+        
+        #mostrar resultados
+        self.mostrarResultados()
+        self.botonExportar.config(state=tk.NORMAL) # habilitar boton de exportar resultados
+        
+    #funcion para exportar resultados a un archivo csv
+    def exportarResultados(self):
+        if not self.doi_unicos and not self.doi_repetidos:
+            messagebox.showwarning("Advertencia", "No hay resultados para exportar.")
+            return
+        archivoSalida = filedialog.asksaveasfilename(title="Guardar Resultados", defaultextension=".csv", filetypes=[("Archivos CSV","*.csv")], initialdir=".") # abrir cuadro de dialogo para guardar archivo
+        
+        if not archivoSalida:
+            return
+        
+        extension = os.path.splitext(archivoSalida)[1].lower()
+        
+        if extension != ".csv":
+            with open(archivoSalida, 'w', encoding='utf-8', newline='') as archivoCSV:
+                escritor = cs.writer(archivoCSV)
+                escritor.writerow(["Titulo", "DOI", "Archivo"])
+                
+                for doi, datos in self.doi_unicos.items():
+                    escritor.writerow([datos['titulo'], doi, datos['archivo']])
+                
+        else:
+            with open(archivoSalida, 'w', encoding='utf-8') as f:
+                f.write("Aritculos unicos\n\n")
+                for doi, datos in self.doi_unicos.items():
+                    f.write(f"Titulo: {datos['titulo']}\n")
+                    f.write(f"DOI: {doi}\n")
+                    f.write(f"Archivo: {datos['archivo']}\n\n")
+        
+        messagebox.showinfo("Exito", f"Resultados exportados a:\n\n{archivoSalida}")
+        print(f"Resultados exportados a: {archivoSalida}") # imprimir mensaje de exito
+            
     #funcion para seleccionar archivo CSV
     def seleccionArchivo(self, evento=None):
         archivoRuta = filedialog.askopenfilename(title="Archivo CSV", filetypes=[("Archivos CSV","*.csv")], initialdir=".") # abrir cuadro de dialogo para seleccionar archivo
         if archivoRuta:
-            self.archivoRuta = archivoRuta # almacenar la ruta del archivo seleccionado
+            if isinstance(self.archivoRuta, list):
+                self.archivoRuta.append(archivoRuta) # agregar la ruta del archivo seleccionado a la lista
+            else:
+                if self.archivoRuta:
+                    self.archivoRuta = [self.archivoRuta] + list(archivoRuta) # convertir a lista y agregar el nuevo archivo
+                else:
+                    self.archivoRuta = list(archivoRuta)
+            
+            self.arctualizarListaArchivos() # actualizar la lista de archivos en la interfaz grafica
             print(f"Archivo seleccionado: {archivoRuta}") # imprimir ruta del archivo seleccionado
+            for ruta in self.archivoRuta:
+                print(f"- {ruta}")
             self.bloqueoboton("CSV") # bloquear botones de conversion
             
     
@@ -293,20 +456,21 @@ class AnalizadorApp:
         print(f"Motor de busqueda seleccionado: {motorBusqueda}") # imprimir motor de busqueda seleccionado (ver si jala el boton)
         print(f"Archivo a analizar: {self.archivoRuta}") # imprimir archivo a analizar (ver si jala el boton)
         
+        archivos = self.archivoRuta if isinstance(self.archivoRuta, list) else [self.archivoRuta]
         #llamar a la funcion para analizar el archivo
-        self.analizarArchivo(self.archivoRuta, motorBusqueda)
+        self.analizarArchivo(archivos, motorBusqueda)
         
         
     #funcion para analizar el archivo seleccionado
     def analizarArchivo(self, archivoRuta, motorBusqueda):
         match motorBusqueda:
             case "IEEE":
-                self.analizarIEEE(archivoRuta)
+                self.analizarMultiple(archivoRuta, poCampos=["Document Title", "Title", "title"])
             case "SD":
-                self.analizarSD(archivoRuta)
+                self.analizarMultiple(archivoRuta, poCampos=["TI", "T1", "Title", "title"])
                 
             case "ACM":
-                self.analizarACM(archivoRuta)
+                self.analizarMultiple(archivoRuta,  poCampos=["title", "Title"])
             case _:
                 print("Error: Motor de busqueda no reconocido.") # imprimir mensaje de error
                 return
@@ -402,8 +566,10 @@ class AnalizadorApp:
         else:
             for doi, titulos in self.doi_repetidos.items():
                 self.resultadosTexto.insert(tk.END, f"  DOI: {doi}\n")
+                self.resultadosTexto.insert(tk.END, f"  Aparece en {len(titulos)} articulos:\n")
                 for titulo in titulos:
                     self.resultadosTexto.insert(tk.END, f"    Titulo: {titulo}\n")
+                    self.resultadosTexto.insert(tk.END, f"    \n")
                 self.resultadosTexto.insert(tk.END, "\n")
         
         #mostrar articulos unicos
@@ -411,9 +577,12 @@ class AnalizadorApp:
         if not self.doi_unicos:
             self.resultadosTexto.insert(tk.END, "  Ninguno\n")
         else:
-            for doi, titulo in self.doi_unicos.items():
-                self.resultadosTexto.insert(tk.END, f"  Titulo: {titulo}\n")
-                self.resultadosTexto.insert(tk.END, f"    DOI: {doi}\n\n")
+            for i, (doi, datos) in enumerate(self.doi_unicos.items(), 1):
+                    self.resultadosTexto.insert(tk.END, f"{i}. {datos['titulo']}\n")
+                    self.resultadosTexto.insert(tk.END, f"   DOI: {doi}\n")
+                    self.resultadosTexto.insert(tk.END, f"   Archivo: {datos['archivo']}\n\n")
+        
+        self.resultadosTexto.config(state=tk.DISABLED) # deshabilitar el cuadro de texto para evitar edicion manual
 
     
     def bloqueoboton (self,origen):
