@@ -10,7 +10,13 @@ interfaz hecha en la cual se puede hacer:
         * devuelve el titulo y el doi
 
 -----------------------------------------------------------------
+librerias necesarias para ocupar
 
+'''
+pip install bibtexparser
+'''
+
+=================================================================
 Recursos utilizados para la creacion de este programa:
 * https://docs.python.org/3/library/tkinter.html
 * https://www.geeksforgeeks.org/python/create-first-gui-application-using-python-tkinter/

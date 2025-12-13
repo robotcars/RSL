@@ -3,10 +3,15 @@ Programa con interfaz grafica para analizar resultados de busqueda de distintas 
 la seleccion de papers relevantes devolviendo el DOI de estos articulos.
 '''
 import tkinter as tk # libreria para interfaz grafica
-from tkinter import filedialog # libreria para dialogos de archivos
+from tkinter import filedialog, messagebox # libreria para dialogos de archivos y mensajes
 import csv as cs # libreria para manejo de archivos csv
 import os # libreria para manejo de archivos y rutas
 import re # libreria para expresiones regulares
+from collections import defaultdict # libreria para diccionarios con listas por defecto
+import bibtexparser # libreria para manejo de archivos bibtex
+
+
+
 
 class AnalizadorApp:
     # constructor de la clase
@@ -33,7 +38,9 @@ class AnalizadorApp:
         #-------------------------------------------
         #almacen
         self.archivoRuta = None # ruta del archivo seleccionado
-        self.palabrasClave = [] # lista de palabras clave agregadas
+        # almacen para analisis de DOI
+        self.doi_repetidos = {}
+        self.doi_unicos = {}    
         
         # configuracion de los elementos de la ventana
         # etiqueta con instrucciones para subir archivo
@@ -44,6 +51,14 @@ class AnalizadorApp:
         self.textoInstrucciones.config(justify="left") # alinear texto a la izquierda
         self.textoInstrucciones.config(wraplength=480) # establecer longitud de ajuste de texto para evitar desbordamiento
         self.textoInstrucciones.grid(row=0, column=0, columnspan=3, padx=10, pady=(10,5), sticky="w") # posicionar la etiqueta en la ventana
+        
+        #mostrar archivo seleccionado
+        self.textoSelec = tk.Label(self.ventana, text="Ningun archivo seleccionado") # etiqueta para mostrar archivo seleccionado
+        self.textoSelec.config(font=("Arial", 10)) # configurar fuente de la etiqueta
+        self.textoSelec.config(fg="#555555") # configurar color de la fuente de la etiqueta
+        self.textoSelec.config(bg="#f0f0f0") # configurar color
+        self.textoSelec.config(justify="left") # alinear texto a la izquierda
+        self.textoSelec.grid(row=2, column=0, columnspan=3, padx=10, pady=5, sticky="w") # posicionar la etiqueta en la ventana
                 
         # boton para seleccionar archivo
         self.botonSeleccionar = tk.Button(self.ventana, text="Seleccionar Archivo", command= self.seleccionArchivo) # boton para seleccionar archivo
@@ -62,24 +77,20 @@ class AnalizadorApp:
         self.botonConvertirRI = tk.Button(self.ventana, text="Convertir RIS a CSV", command= self.convertidorRI) # boton para convertir ris a csv
         self.botonConvertirRI.grid(row=1, column=2, padx=10, pady=5, sticky="e") # posicionar el boton en la ventana
         
-        #-------------------------------------------
-        #Seccion de agregar palabras clave a la busqueda#
-        # etiqueta para palabras clave
-        self.textoPalabrasClave = tk.Label(self.ventana, text="Agregar Palabras Clave para Filtrar Resultados separadas por comas:") # etiqueta para palabras clave
-        self.textoPalabrasClave.config(font=("Arial", 12)) # configurar fuente de la etiqueta
-        self.textoPalabrasClave.config(fg="#333333") # configurar color de la fuente de la etiqueta
-        self.textoPalabrasClave.config(bg="#f0f0f0") # configurar color de
-        self.textoPalabrasClave.config(justify="left") # alinear texto a la izquierda
-        self.textoPalabrasClave.config(wraplength=480) # establecer longitud de ajuste de texto para evitar desbordamiento
-        self.textoPalabrasClave.grid(row=3, column=0, columnspan=3, padx=10, pady=(15,5), sticky="w") # posicionar la etiqueta en la ventana
+        #etica con informacion sobre el convertidor bib a csv
+        self.InformacionBib = tk.Label(self.ventana, text="Convertidor de archivos BIB a CSV para ACM Digital") # etiqueta con instrucciones
+        self.InformacionBib.config(font=("Arial", 10)) # configurar fuente de la etiqueta
+        self.InformacionBib.config(fg="#333333") # configurar color de la fuente de la etiqueta
+        self.InformacionBib.config(bg="#f0f0f0") # configurar color
+        self.InformacionBib.config(justify="left") # alinear texto a la izquierda
+        self.InformacionBib.config(wraplength=260) # establecer longitud de ajuste de texto para evitar desbordamiento
+        self.InformacionBib.grid(row=2, column=2, padx=10, pady=5, sticky="w") # posicionar la etiqueta en la ventana
         
-        # entrada para palabras clave
-        self.ingestaPa = tk.Entry(self.ventana, width=50) # entrada para palabras clave
-        self.ingestaPa.grid(row=4, column=0, padx=10, pady=5, sticky="we") # posicionar la entrada en la ventana
-            
-        # boton para agregar palabras clave
-        self.botonAgregar = tk.Button(self.ventana, text="Agregar Palabras Clave", command=self.agregarPalabrasClave) # boton para agregar palabras clave
-        self.botonAgregar.grid(row=4, column=2, padx=10, pady=5, sticky="w") # posicionar el boton en la ventana
+        #boton para convertir bib a csv
+        self.botonConvertirBub = tk.Button(self.ventana, text="Convertir BIB a CSV", command= self.convertidorBIB) # boton para convertir bib a csv
+        self.botonConvertirBub.grid(row=2, column=2, padx=10, pady=5, sticky="e") # posicionar el boton en la ventana
+        
+        #-------------------------------------------
         
         #boton para seleccionar el motor de busqueda del que fue extraido el archivo
         self.textoInfoInst = tk.Label(self.ventana, text="Seleccione el motor de busqueda del que fue extraido el archivo:") # etiqueta con instrucciones
@@ -90,11 +101,15 @@ class AnalizadorApp:
         self.textoInfoInst.config(wraplength=480) # establecer longitud de ajuste de texto para evitar desbordamiento
         self.textoInfoInst.grid(row=5, column=0, columnspan=3, padx=10, pady=(15,5), sticky="w") # posicionar la etiqueta en la ventana
         
-        
+        #botones de radio para seleccionar el motor de busqueda
         self.MotorVar = tk.StringVar() # variable para almacenar el motor seleccionado
         self.MotorVar.set("NULL") # valor por defecto
         self.MotorBoton = tk.Radiobutton(self.ventana, text="IEEE", value="IEEE", variable=self.MotorVar) # boton de radio para IEEE
         self.MotorBoton.grid(row=6, column=0, padx=10, pady=5, sticky="w") # posicionar el boton de radio en la ventana
+        self.MotorBoton2 = tk.Radiobutton(self.ventana, text= "Science Direct", value="SD", variable=self.MotorVar) # boton de radio para Science Direct
+        self.MotorBoton2.grid(row=6, column=1, padx=10, pady=5, sticky="w") # posicionar el boton de radio en la ventana
+        self.MotorBoton3 = tk.Radiobutton(self.ventana, text= "ACM Digital", value="ACM", variable=self.MotorVar) # boton de radio para ACM Digital
+        self.MotorBoton3.grid(row=6, column=2, padx=10, pady=5, sticky="w") # posicionar el boton de radio en la ventana
         
         
         #boton para iniciar analisis
@@ -112,13 +127,27 @@ class AnalizadorApp:
     FUNCIONES DE LA APLICACION
     ---------------------------------------------------
     '''
+              
+    #funcion para convertir ris a csv
+    '''
+    Esta funcion es para convertir archivos *.ris a *.csv, porque science direct no tiene opcion de exportar a csv directamente
+    y la opcion que encontre en linea nunca lo convertio o no servia la pagina en el momento de la consulta y las otras 
+    paginas tenia que crear cuenta.
+    .|. science direct
+    '''
     def convertidorRI(self):
         archivoRIS = filedialog.askopenfilename(title="Archivo RIS", filetypes=[("Archivos RIS","*.ris")], initialdir=".") # abrir cuadro de dialogo para seleccionar archivo ris
+        
+        #verifica si se selecciono un archivo
+        if not archivoRIS:
+            print("No se selecciono ningun archivo RIS.") # imprimir mensaje si no se selecciono ningun archivo
+            return
         print(f"Archivo RIS seleccionado: {archivoRIS}") # imprimir ruta del archivo ris seleccionado
-        nombreArchivo = os.path.basename(archivoRIS) # obtener nombre del archivo ris
-        if archivoRIS:
-            with open(archivoRIS, 'r', encoding='utf-8') as ar: # abrir archivo ris
-                leer = ar.read() # leer archivo ris
+        
+        nombreArchivo = os.path.basename(archivoRIS)# obtener nombre del archivo ris 
+        
+        with open(archivoRIS, 'r', encoding='utf-8') as ar: # abrir archivo ris
+            leer = ar.read() # leer archivo ris
             
             #leer registros
             registros = re.split(r'\n(?=TY\s+-)', leer) # dividir registros por salto de linea seguido de TY  -
@@ -127,17 +156,21 @@ class AnalizadorApp:
             referencias = []
             todoCam = set()
             for registro in registros:
-                if not referencias.strip():
+                #omitir registros vacios
+                if not registro.strip():
                     continue
+                
                 ref = defaultdict(list) # diccionario para almacenar campos de la referencia
-                lineas = registro.split('\n')
+                lineas = registro.strip().split('\n') # dividir registro en lineas
                 
                 for linea in lineas:
                     match = re.match(r'^([A-Z0-9]{2})\s+-\s+(.+)$', linea)
                     if match:
-                        campo, valor = match.groups()
-                        ref[campo].append(valor)
-                        todoCam.add(campo)
+                        campo_actual, valor = match.groups()
+                        ref[campo_actual].append(valor)
+                        todoCam.add(campo_actual)
+                    elif campo_actual and linea.strip():
+                        ref[campo_actual][-1] += ' ' + linea.strip()
                 
                 if ref:
                     referencias.append(ref)
@@ -146,21 +179,26 @@ class AnalizadorApp:
         ordenCampos = sorted(todoCam)
         
         #crear archivo csv
-        with open(f"{nombreArchivo[:-4]}.csv", 'w', encoding='utf-8', newline='') as archivoCSV:
+        nomArchiCSV= f"{nombreArchivo[:-4]}.csv" # nombre del archivo csv
+        rutaSalida = os.path.join(os.path.dirname(archivoRIS), nomArchiCSV) # ruta de salida del archivo csv
+        
+        with open(rutaSalida, 'w', encoding='utf-8', newline='') as archivoCSV: # abrir archivo csv para escritura
             escritor = cs.DictWriter(archivoCSV, fieldnames=ordenCampos) # crear escritor de csv
             escritor.writeheader() # escribir encabezado
             
             for ref in referencias:
                 row = {campo: ' ; '.join(ref.get(campo, [])) for campo in ordenCampos} # unir valores de campos multiples con ;
                 escritor.writerow(row) # escribir fila en el archivo csv
-                        
-    #funcion para convertir ris a csv
-    '''
-    Esta funcion es para convertir archivos *.ris a *.csv, porque science direct no tiene opcion de exportar a csv directamente
-    y la opcion que encontre en linea nunca lo convertio o no servia la pagina en el momento de la consulta y las otras 
-    paginas tenia que crear cuenta.
-    .|. science direct
-    '''
+        
+        
+        
+        #guardar archivo csv
+        self.archivoRuta = rutaSalida # almacenar la ruta del archivo csv generado
+        self.textoSelec.config(text=f"Archivo seleccionado: {rutaSalida}") # actualizar etiqueta con la ruta del archivo seleccionado
+        #mensaje de exito
+        messagebox.showinfo("Salio bien", f"Archivo CSV creado:\n\n{nomArchiCSV}")
+        print(f"Archivo CSV creado: {rutaSalida}") # ver si funciona
+        self.bloqueoboton("RIS") # bloquear botones de conversion
     
     #funcion para convertir bib a csv
     '''
@@ -168,19 +206,70 @@ class AnalizadorApp:
     .|. acm digital
     '''
     
-    #funcion para seleccionar archivo
+    def convertidorBIB(self):
+        archivoBib = filedialog.askopenfilename(title="Archivo BIB", filetypes=[("Archivos BIB","*.bib")], initialdir=".") # abrir cuadro de dialogo para seleccionar archivo bib
+        
+        #verifica si se selecciono un archivo
+        if not archivoBib:
+            print("No se selecciono ningun archivo BIB.") # imprimir mensaje si no se selecciono ningun archivo
+            return
+        print(f"Archivo BIB seleccionado: {archivoBib}") # imprimir ruta del archivo bib seleccionado
+        
+        nombreArchivo = os.path.basename(archivoBib)# obtener nombre del archivo bib
+        rutaArchivo = os.path.dirname(archivoBib) # obtener ruta del archivo bib
+        rutaCsv = os.path.join(rutaArchivo, f"{nombreArchivo[:-4]}.csv") # ruta del archivo csv de salida
+        
+        with open(archivoBib, 'r', encoding='utf-8') as ar: # abrir archivo bib
+            bibLei = bibtexparser.load(ar) # leer archivo bib
+            
+            #verificar si hay entradas
+            if not bibLei.entries:
+                print("No se encontraron entradas en el archivo BIB.") # imprimir mensaje si no se encontraron entradas
+                return
+            
+            #recoler campos
+            todoCam = set()
+            for entrada in bibLei.entries:
+                todoCam.update(entrada.keys())
+            
+            campos = list(todoCam) # lista de campos
+            camposOrdenados = []
+            
+            #ordenar campos
+            for fijo in ["ID", "ENTRYTYPE"]:
+                if fijo in campos:
+                    camposOrdenados.append(fijo)
+                    campos.remove(fijo)
+            camposOrdenados.extend(sorted(campos)) # agregar campos restantes en orden alfabetico
+            
+        #crear archivo csv
+        with open(rutaCsv, "w", encoding='utf-8') as esc:
+            escrito = cs.DictWriter(esc, fieldnames=camposOrdenados) # crear escritor de csv
+            escrito.writeheader() # escribir encabezado
+            for entrada in bibLei.entries:
+                escrito.writerow(entrada) # escribir fila en el archivo csv
+        
+        #guardar archivo csv
+        self.archivoRuta = rutaCsv
+        self.textoSelec.config(text=f"Archivo seleccionado: {rutaCsv}")
+        #mensaje de exito
+        messagebox.showinfo("Salio bien", f"Archivo CSV creado:\n\n{nombreArchivo[:-4]}.csv")
+        print(f"Archivo CSV creado: {rutaCsv}") # ver si funciona
+        self.bloqueoboton("BIB") # bloquear botones de conversion
+        
+            
+            
+            
+    
+    #funcion para seleccionar archivo CSV
     def seleccionArchivo(self, evento=None):
         archivoRuta = filedialog.askopenfilename(title="Archivo CSV", filetypes=[("Archivos CSV","*.csv")], initialdir=".") # abrir cuadro de dialogo para seleccionar archivo
         if archivoRuta:
             self.archivoRuta = archivoRuta # almacenar la ruta del archivo seleccionado
             print(f"Archivo seleccionado: {archivoRuta}") # imprimir ruta del archivo seleccionado
+            self.bloqueoboton("CSV") # bloquear botones de conversion
+            
     
-    # funcion para agregar palabras clave
-    def agregarPalabrasClave(self):
-        texto = self.ingestaPa.get() # obtener palabras clave ingresadas
-        #separar palabras clave por comas y eliminar espacios en blanco
-        self.palabras = [palabra.strip() for palabra in texto.split(",") if palabra.strip()]
-        print(f"Palabras clave agregadas: {self.palabras}") # imprimir palabras clave agregadas (ver si jala el boton)
         
     # funcion para buscar articulos relevantes
     def Buscador(self):
@@ -191,10 +280,6 @@ class AnalizadorApp:
             print("Error: No se ha seleccionado un archivo.") # imprimir mensaje de error
             return
 
-        # verificar que se hayan agregado palabras clave
-        if not self.palabras:
-            print("Error: No se han agregado palabras clave.") # imprimir mensaje de error
-            return
         
         # obtener el motor de busqueda seleccionado
         motorBusqueda = self.MotorVar.get()
@@ -207,61 +292,145 @@ class AnalizadorApp:
         print("Buscando :)") # imprimir mensaje de busqueda (ver si jala el boton)
         print(f"Motor de busqueda seleccionado: {motorBusqueda}") # imprimir motor de busqueda seleccionado (ver si jala el boton)
         print(f"Archivo a analizar: {self.archivoRuta}") # imprimir archivo a analizar (ver si jala el boton)
-        print(f"Palabras clave a usar: {self.palabras}") # imprimir palabras clave a usar (ver si jala el boton)
         
         #llamar a la funcion para analizar el archivo
-        self.analizarArchivo(self.archivoRuta, self.palabras, motorBusqueda)
+        self.analizarArchivo(self.archivoRuta, motorBusqueda)
         
         
     #funcion para analizar el archivo seleccionado
-    def analizarArchivo(self, archivoRuta, palabrasClave, motorBusqueda):
+    def analizarArchivo(self, archivoRuta, motorBusqueda):
         match motorBusqueda:
             case "IEEE":
-                self.analizarIEEE(archivoRuta, palabrasClave)
+                self.analizarIEEE(archivoRuta)
+            case "SD":
+                self.analizarSD(archivoRuta)
+                
+            case "ACM":
+                self.analizarACM(archivoRuta)
+            case _:
+                print("Error: Motor de busqueda no reconocido.") # imprimir mensaje de error
+                return
 
     
-    #archivo de IEEE
-    def analizarIEEE(self, archivoRuta, palabrasClave):
-        
-        #nombreArchivo = os.path.basename(archivoRuta) # obtener nombre del archivo
-        #print(f"Analizando archivo IEEE: {nombreArchivo}") # imprimir nombre del archivo analizado 
-        
-        self. articulosRelevantes = [] # lista para almacenar articulos relevantes encontrados
-        # por el momento para prueba solo devuelve el nombre del articulo y el doi
-        
-        with open(archivoRuta, 'r', encoding='utf-8') as archivoCSV: # abrir archivo csv
-            leectura = cs.DictReader(archivoCSV) # leer archivo csv como diccionario
+    def analizisDoi(self, archivoRuta,poCampos= None):
+        if poCampos is None:
+            poCampos = []
             
-            for fila in leectura: # lee las columnas por nombre de encabezado
-                titulo = fila.get('Document Title', '') # obtener titulo del articulo
-                doi = fila.get('DOI', '') # obtener doi del articulo
+        self.doi_repetidos = {}
+        self.doi_unicos = {}
+        
+        # leer archivo csv
+        with open(archivoRuta, 'r', encoding='utf-8') as archivoCSV: # abrir archivo csv
+            leer = cs.DictReader(archivoCSV) # leer archivo csv como diccionario
+            campos = leer.fieldnames or [] # obtener nombres de los campos
+            
+            campoDoi = None
+           
+            for c in campos:
+                c_limpio = c.strip().lower()
+                if c_limpio == 'doi' or c_limpio == 'do' or 'doi' in c_limpio:
+                    campoDoi = c
+                    break
+            if not campoDoi:
+                messagebox.showerror("Error", "No se encontro un campo DOI en el archivo CSV.")
+                return
+            
+            campoTitulo = None
+            for candidato in poCampos:
+                for c in campos:
+                    c_limpio = c.strip()
+                    if c_limpio.lower() == candidato.lower() or candidato.lower() in c_limpio.lower():
+                        campoTitulo = c
+                        break
+                if campoTitulo:
+                    break
+            
+            #campo titulo por defecto
+            if not campoTitulo:
+                campoTitulo = campos[0] if campos else None
+            
+            agrupado = defaultdict(list)
+            
+            #leer filas y agrupar por doi
+            for fila in leer:
+                doi = fila.get(campoDoi, '').strip()
+                titulo = fila.get(campoTitulo, '').strip() if campoTitulo else 'Titulo Desconocido'
                 
-                #almacena el resultado
-                self.articulosRelevantes.append({
-                    'titulo': titulo,
-                    'doi': doi
-                })
-        #para ver si jala
-        print("Articulos Relevantes Encontrados:") # imprimir mensaje de articulos relevantes encontrados
-        for articulo in self.articulosRelevantes:
-            print(f"Titulo: {articulo['titulo']}, DOI: {articulo['doi']}") # imprimir titulo y doi del articulo relevante found
-        #mostrar resultados en la interfaz grafica
+                if doi:
+                    agrupado[doi].append(titulo)
+        
+        #separar doi unicos y repetidos
+        self.doi_repetidos = {doi: titulos for doi, titulos in agrupado.items() if len(titulos) > 1}
+        self.doi_unicos = {doi: titulos[0] for doi, titulos in agrupado.items() if len(titulos) == 1}
+        
+        self.articulosRelevantes = []
+        for doi, titulo in self.doi_unicos.items():
+            self.articulosRelevantes.append({
+                'titulo': titulo,
+                'doi': doi
+            })
+            
         self.mostrarResultados()
+    #archivo de IEEE
+    def analizarIEEE(self, archivoRuta):
+        
+        self.analizisDoi(archivoRuta, poCampos=["Title", "Document Title", "title"])
+        
+        
+    #archivo de science direct
+    def analizarSD(self, archivoRuta):
+        self.analizisDoi(archivoRuta, poCampos=["TI", "T1", "Title", "title"])
+        
+    #archivo de acm digital
+    def analizarACM(self, archivoRuta):
+       self.analizisDoi(archivoRuta, poCampos=["Title", "Document Title", "title"])
         
     #funcion para mostrar resultados en la interfaz grafica
     def mostrarResultados(self):
         self.resultadosTexto.config(state=tk.NORMAL) # habilitar el cuadro de texto para edicion
         self.resultadosTexto.delete(1.0, tk.END) # limpiar el cuadro de texto
         
-        if not self.articulosRelevantes:
-            self.resultadosTexto.insert(tk.END, "No se encontraron articulos relevantes.\n") # mostrar mensaje si no se encontraron articulos relevantes
-        else:
-            for articulo in self.articulosRelevantes:
-                self.resultadosTexto.insert(tk.END, f"Titulo: {articulo['titulo']}\nDOI: {articulo['doi']}\n\n") # mostrar titulo y doi del articulo relevante found
+        if not self.doi_repetidos and not self.doi_unicos:
+            self.resultadosTexto.insert(tk.END, "No se encontraron articulos en el archivo seleccionado.\n")
+            self.resultadosTexto.config(state=tk.DISABLED) # deshabilitar el cuadro de texto para evitar edicion manual
+            return
         
-        self.resultadosTexto.config(state=tk.DISABLED) # deshabilitar el cuadro de texto para evitar edicion manual
+        #mostrar articulos repetidos
+        self.resultadosTexto.insert(tk.END, "Articulos con DOI Repetidos:\n")
+        if not self.doi_repetidos:
+            self.resultadosTexto.insert(tk.END, "  Ninguno\n")
+        else:
+            for doi, titulos in self.doi_repetidos.items():
+                self.resultadosTexto.insert(tk.END, f"  DOI: {doi}\n")
+                for titulo in titulos:
+                    self.resultadosTexto.insert(tk.END, f"    Titulo: {titulo}\n")
+                self.resultadosTexto.insert(tk.END, "\n")
+        
+        #mostrar articulos unicos
+        self.resultadosTexto.insert(tk.END, "Articulos con DOI Unicos:\n")
+        if not self.doi_unicos:
+            self.resultadosTexto.insert(tk.END, "  Ninguno\n")
+        else:
+            for doi, titulo in self.doi_unicos.items():
+                self.resultadosTexto.insert(tk.END, f"  Titulo: {titulo}\n")
+                self.resultadosTexto.insert(tk.END, f"    DOI: {doi}\n\n")
 
     
+    def bloqueoboton (self,origen):
+        match origen:
+            case "CSV":
+                self.botonConvertirRI.config(state=tk.DISABLED)
+                self.botonConvertirBub.config(state=tk.DISABLED)
+            case "RIS":
+                self.botonSeleccionar.config(state=tk.DISABLED)
+                self.botonConvertirBub.config(state=tk.DISABLED)
+                
+            case "BIB":
+                self.botonSeleccionar.config(state=tk.DISABLED)
+                self.botonConvertirRI.config(state=tk.DISABLED)
+            case _:
+                print("Error: Opcion no valida para bloquear/desbloquear boton.") # imprimir mensaje de error
+                return
     
 #main del programa
 if __name__ == "__main__":
