@@ -8,13 +8,13 @@ interfaz hecha en la cual se puede hacer:
 * puede convertir un archivo RIS a CSV
 * devuelve el titulo y el doi
 
-======================================================================
+**********************************************************************
 V 0.2
 ----------------------------------------------------------------------
 * Se agrego el convertidor BIB a CSV
 * Se agrego los motores de busquda science direct y acm digital para mejorar el analizis de esos archivos
 * Se agrego la posibilidad de analisas multiples archivos
-=======================================================================
+**********************************************************************
 V 0.3
 -----------------------------------------------------------------------
 * Se corrigieron bugs
@@ -22,7 +22,7 @@ V 0.3
 * Y se puede ver los archivos subidos
 * Se pueden exportar los resultados a CSV con un boton agregado
 
-========================================================================
+**********************************************************************
 librerias necesarias para ocupar
 
 ```
@@ -30,7 +30,7 @@ pip install bibtexparser
 ```
 
 
-=================================================================
+**********************************************************************
 Recursos utilizados para la creacion de este programa:
 * https://docs.python.org/3/library/tkinter.html
 * https://www.geeksforgeeks.org/python/create-first-gui-application-using-python-tkinter/
