@@ -137,14 +137,38 @@ class AnalizadorApp:
         self.botonBusqueda = tk.Button(self.ventana, text="Escoger", command= self.Buscador) # boton para buscar articulos relevantes
         self.botonBusqueda.grid(row=7, column=0, columnspan=3, padx=10, pady=10, sticky="nsew") # posicionar el boton en la ventana
         
+        # frame para el buscador de DOI
+        self.frameBuscadorDoi = tk.Frame(self.ventana, bg="#e8f4f8", relief=tk.RIDGE, bd=2)
+        self.frameBuscadorDoi.grid(row=8, column=0, columnspan=3, padx=10, pady=10, sticky="nsew")
+        self.frameBuscadorDoi.grid_columnconfigure(1, weight=1)
+
+        # Etiqueta para el buscador
+        self.labelBuscadorDoi = tk.Label(self.frameBuscadorDoi, text="Buscar DOI especifico:", bg="#e8f4f8", font=("Arial", 11, "bold"))
+        self.labelBuscadorDoi.grid(row=0, column=0, padx=10, pady=5, sticky="w")
+
+        # Campo de entrada para el DOI
+        self.entradaDoi = tk.Entry(self.frameBuscadorDoi, width=50)
+        self.entradaDoi.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
+        self.entradaDoi.bind('<Return>', lambda e: self.buscarDoiEspecifico())  # Buscar al presionar Enter
+
+        # Boton para buscar DOI
+        self.botonBuscarDoi = tk.Button(self.frameBuscadorDoi, text="Buscar DOI", command=self.buscarDoiEspecifico)
+        self.botonBuscarDoi.grid(row=0, column=2, padx=10, pady=5, sticky="e")
+
+        # Texto para mostrar resultados de busqueda de DOI
+        self.resultadoBuscadorDoi = tk.Text(self.frameBuscadorDoi, height=5, width=60, bg="#ffffff")
+        self.resultadoBuscadorDoi.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
+        self.resultadoBuscadorDoi.config(state=tk.DISABLED)
+        self.frameBuscadorDoi.grid_rowconfigure(1, weight=1)
+        
         #cuadro de texto para mostrar resultados
         self.resultadosTexto = tk.Text(self.ventana, height=10, width=60) # cuadro de texto para mostrar resultados
-        self.resultadosTexto.grid(row=8, column=0, columnspan=3, padx=10, pady=10, sticky="nsew") # posicionar el cuadro de texto en la ventana
+        self.resultadosTexto.grid(row=9, column=0, columnspan=3, padx=10, pady=10, sticky="nsew") # posicionar el cuadro de texto en la ventana
         self.resultadosTexto.config(state=tk.DISABLED) # deshabilitar el cuadro de texto para evitar edicion manual
         
         #boton para exportar resultados
         self.botonExportar = tk.Button(self.ventana, text="Exportar Resultados", command= self.exportarResultados) # boton para exportar resultados
-        self.botonExportar.grid(row=9, column=0, columnspan=3, padx=10, pady=5, sticky="nsew") # posicionar el boton en la ventana
+        self.botonExportar.grid(row=10, column=0, columnspan=3, padx=10, pady=5, sticky="nsew") # posicionar el boton en la ventana
         self.botonExportar.config(state=tk.DISABLED) # deshabilitar el boton de exportar resultados hasta que haya resultados
         #-------------------------------------------
         
@@ -309,6 +333,10 @@ class AnalizadorApp:
         self.resultadosTexto.delete(1.0, tk.END) # limpiar el cuadro de texto
         self.resultadosTexto.config(state=tk.DISABLED) # deshabilitar el cuadro de texto para evitar edicion manual
         self.botonExportar.config(state=tk.DISABLED) # deshabilitar boton de exportar
+        self.resultadoBuscadorDoi.config(state=tk.NORMAL)
+        self.resultadoBuscadorDoi.delete(1.0, tk.END)
+        self.resultadoBuscadorDoi.config(state=tk.DISABLED)
+        self.entradaDoi.delete(0, tk.END)
         print("Seleccion de archivos limpiada.") # imprimir mensaje de limpieza de seleccion
         
     #funcion para actualizar la lista de archivos seleccionados en la interfaz grafica
@@ -368,7 +396,7 @@ class AnalizadorApp:
                     doi = fila.get(campoDoi, '').strip()
                     titulo = fila.get(campoTitulo, '').strip() if campoTitulo else 'Titulo Desconocido'
                     
-                    if doi:
+                    if doi and doi.lower() not in ['', 'n/a', 'na', 'none', 'null']:
                         agrupado[doi]['titulos'].append(titulo)
                         agrupado[doi]['archivos'].append(nombreArchivo)
                         
@@ -520,7 +548,7 @@ class AnalizadorApp:
                 doi = fila.get(campoDoi, '').strip()
                 titulo = fila.get(campoTitulo, '').strip() if campoTitulo else 'Titulo Desconocido'
                 
-                if doi:
+                if doi and doi.lower() not in ['', 'n/a', 'na', 'none', 'null']:
                     agrupado[doi].append(titulo)
         
         #separar doi unicos y repetidos
@@ -601,6 +629,89 @@ class AnalizadorApp:
                 print("Error: Opcion no valida para bloquear/desbloquear boton.") # imprimir mensaje de error
                 return
     
+    #funcion para buscar un DOI especifico en los archivos seleccionados
+    def buscarDoiEspecifico(self):
+        doi_buscar = self.entradaDoi.get().strip()
+        
+        if not doi_buscar:
+            messagebox.showwarning("Advertencia", "Por favor ingrese un DOI para buscar.")
+            return
+        
+        if not self.archivoRuta:
+            messagebox.showwarning("Advertencia", "Por favor seleccione archivos primero.")
+            return
+        
+        # Normalizar DOI para busqueda (eliminar espacios y convertir a minusculas)
+        doi_normalizado = doi_buscar.lower().strip()
+        
+        # Buscar en todos los archivos
+        resultados = []
+        archivos = self.archivoRuta if isinstance(self.archivoRuta, list) else [self.archivoRuta]
+        
+        for archivoRuta in archivos:
+            nombreArchivo = os.path.basename(archivoRuta)
+            
+            try:
+                with open(archivoRuta, 'r', encoding='utf-8') as archivoCSV:
+                    leer = cs.DictReader(archivoCSV)
+                    campos = leer.fieldnames or []
+                    
+                    # Buscar campo DOI
+                    campoDoi = None
+                    for c in campos:
+                        c_limpio = c.strip().lower()
+                        if c_limpio == 'doi' or c_limpio == 'do' or 'doi' in c_limpio:
+                            campoDoi = c
+                            break
+                    
+                    if not campoDoi:
+                        continue
+                    
+                    # Buscar campo de titulo
+                    campoTitulo = None
+                    for posible in ["Title", "title", "Document Title", "TI", "T1"]:
+                        for c in campos:
+                            if posible.lower() in c.lower():
+                                campoTitulo = c
+                                break
+                        if campoTitulo:
+                            break
+                    
+                    if not campoTitulo:
+                        campoTitulo = campos[0] if campos else None
+                    
+                    # Leer filas y buscar coincidencias
+                    for fila in leer:
+                        doi_fila = fila.get(campoDoi, '').strip().lower()
+                        if doi_fila and doi_fila not in ['', 'n/a', 'na', 'none', 'null']:
+                            if doi_normalizado in doi_fila or doi_fila in doi_normalizado:
+                                titulo = fila.get(campoTitulo, 'Sin titulo') if campoTitulo else 'Sin titulo'
+                                resultados.append({
+                                    'archivo': nombreArchivo,
+                                    'doi': fila.get(campoDoi, '').strip(),
+                                    'titulo': titulo
+                                })
+            except Exception as e:
+                print(f"Error al leer archivo {nombreArchivo}: {e}")
+        
+        # Mostrar resultados
+        self.resultadoBuscadorDoi.config(state=tk.NORMAL)
+        self.resultadoBuscadorDoi.delete(1.0, tk.END)
+        
+        if not resultados:
+            self.resultadoBuscadorDoi.insert(tk.END, f"No se encontro el DOI '{doi_buscar}' en los archivos seleccionados.\n")
+        else:
+            self.resultadoBuscadorDoi.insert(tk.END, f"Se encontro el DOI en {len(resultados)} ubicacion(es):\n\n")
+            for i, res in enumerate(resultados, 1):
+                self.resultadoBuscadorDoi.insert(tk.END, f"{i}. Archivo: {res['archivo']}\n")
+                self.resultadoBuscadorDoi.insert(tk.END, f"   DOI: {res['doi']}\n")
+                self.resultadoBuscadorDoi.insert(tk.END, f"   Titulo: {res['titulo']}\n\n")
+            
+            if len(resultados) > 1:
+                self.resultadoBuscadorDoi.insert(tk.END, f"*** ADVERTENCIA: El DOI esta REPETIDO en {len(resultados)} archivos ***\n")
+        
+        self.resultadoBuscadorDoi.config(state=tk.DISABLED)
+        
 #main del programa
 if __name__ == "__main__":
     app = AnalizadorApp()
