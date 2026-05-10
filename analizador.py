@@ -1,18 +1,3 @@
-"""
-Analizador de Resultados de Busqueda de Articulos
-Analiza archivos CSV exportados de IEEE, Science Direct y ACM Digital,
-identifica DOIs repetidos y unicos, y permite exportar los resultados.
-
-Funciones nuevas respecto a la version anterior:
-  - Acumulado de DOIs: seccion que registra todos los DOIs unicos que van
-    apareciendo en cada analisis sin borrar los anteriores entre ejecuciones.
-  - Historial de busquedas DOI: lista desplegable con las ultimas consultas.
-  - Copiar resultado al portapapeles: boton en el buscador DOI.
-  - Eliminar archivo individual: clic derecho sobre un archivo en la lista.
-  - Barra de estado: franja inferior que muestra la ultima accion realizada.
-  - Exportar acumulado: boton independiente para guardar el acumulado de sesion.
-"""
-
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import csv as cs
@@ -37,11 +22,42 @@ BADGE_BG  = "#EFF6FF"
 BADGE_FG  = "#1D4ED8"
 PURPLE    = "#7C3AED"
 STATUS_BG = "#1E293B"
+TEAL      = "#0D9488"
 
 FT  = ("Segoe UI", 13, "bold")
 FLB = ("Segoe UI", 10, "bold")
 FS  = ("Segoe UI", 9)
 FM  = ("Consolas", 9)
+
+# ---------------------------------------------------------------------------
+# Columnas DOI conocidas por motor (en orden de prioridad)
+# Se busca coincidencia case-insensitive con strip()
+# ---------------------------------------------------------------------------
+DOI_CANDIDATES = [
+    "doi",   # IEEE, ACM, BIB genericos
+    "do",    # Science Direct RIS exportado a CSV (campo RIS = DO)
+    "url",   # fallback: a veces el DOI va en URL
+]
+
+def _hallar_campo_doi(campos: list[str]) -> str | None:
+    """
+    Devuelve el nombre exacto del campo que contiene el DOI,
+    probando varios candidatos en orden de prioridad.
+    """
+    campos_lower = {c.strip().lower(): c for c in campos}
+    for cand in DOI_CANDIDATES:
+        if cand in campos_lower:
+            return campos_lower[cand]
+    # busqueda parcial como ultimo recurso
+    for c in campos:
+        if "doi" in c.strip().lower():
+            return c
+    return None
+
+def _es_doi_valido(valor: str) -> bool:
+    """Descarta valores nulos/vacios que no son DOIs reales."""
+    v = valor.strip().lower()
+    return v not in ("", "n/a", "na", "none", "null", "-")
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +65,6 @@ FM  = ("Consolas", 9)
 # ---------------------------------------------------------------------------
 
 def make_btn(parent, text, cmd, bg=ACCENT, fg="white", **kw):
-    """Boton plano con cursor de mano."""
     return tk.Button(
         parent, text=text, command=cmd, bg=bg, fg=fg,
         relief=tk.FLAT, font=FLB, cursor="hand2",
@@ -63,7 +78,6 @@ def make_sep(parent, row, padx=16, pady=3):
 
 
 def make_card(parent, row, pady=(4, 4), padx=16):
-    """Frame con borde suave que simula una tarjeta."""
     f = tk.Frame(parent, bg=CARD,
                  highlightthickness=1, highlightbackground=BORDER)
     f.grid(row=row, column=0, sticky="ew", padx=padx, pady=pady)
@@ -71,11 +85,6 @@ def make_card(parent, row, pady=(4, 4), padx=16):
 
 
 def make_scrolled_text(parent, height, **kw):
-    """
-    Text widget con scrollbar vertical.
-    Devuelve (frame_contenedor, widget_text).
-    El frame debe ser posicionado por el llamador.
-    """
     frame = tk.Frame(parent, bg=kw.get("bg", CARD))
     frame.grid_columnconfigure(0, weight=1)
     frame.grid_rowconfigure(0, weight=1)
@@ -94,7 +103,6 @@ def make_scrolled_text(parent, height, **kw):
 
 class AnalizadorApp:
 
-    # ------------------------------------------------------------------ init
     def __init__(self):
         self.ventana = tk.Tk()
         self.ventana.title("Analizador de Resultados de Busqueda")
@@ -106,19 +114,18 @@ class AnalizadorApp:
         self.ventana.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
         self.ventana.resizable(True, True)
         self.ventana.grid_columnconfigure(0, weight=1)
-        # filas que expanden verticalmente
-        self.ventana.grid_rowconfigure(8,  weight=2)   # resultados analisis
-        self.ventana.grid_rowconfigure(11, weight=1)   # acumulado DOIs
+        self.ventana.grid_rowconfigure(8,  weight=2)
+        self.ventana.grid_rowconfigure(11, weight=1)
 
-        # ---- estado interno ------------------------------------------------
-        self.archivoRuta    = []   # rutas de archivos cargados
-        self.doi_repetidos  = {}   # {doi: {titulos, archivos}}
-        self.doi_unicos     = {}   # {doi: {titulo, archivo}}
-        self.acumulado_dois = {}   # {doi: {titulo, archivo}} acumulado sesion
-        self._n_busq_doi    = 0    # contador de busquedas DOI
-        self._historial_doi = []   # terminos buscados (max 20)
+        self.archivoRuta    = []
+        self.doi_repetidos  = {}
+        self.doi_unicos     = {}
+        self.acumulado_dois = {}
+        self._n_busq_doi    = 0
+        self._historial_doi = []
+        self._dois_buscados = {}
+        self._n_encontrados = 0
 
-        # ---- construccion de secciones ------------------------------------
         self._build_header()
         self._build_archivos()
         self._build_analizar()
@@ -150,7 +157,8 @@ class AnalizadorApp:
             row=0, column=0, columnspan=4,
             sticky="w", padx=14, pady=(10, 4))
 
-        self.btnSelec = make_btn(ca, "Agregar CSV", self.seleccionArchivo)
+        # ── BOTONES ──────────────────────────────────────────────────────────
+        self.btnSelec = make_btn(ca, "Agregar CSV(s)", self.seleccionArchivo)
         self.btnSelec.grid(row=1, column=0, padx=(14, 6), pady=6, sticky="w")
 
         self.btnRIS = make_btn(ca, "Convertir RIS a CSV",
@@ -165,15 +173,19 @@ class AnalizadorApp:
                  bg="#94A3B8", fg=TEXT).grid(
             row=1, column=3, padx=(6, 14), pady=6, sticky="e")
 
+        tk.Label(ca,
+                 text="Puedes seleccionar varios archivos a la vez (Ctrl/Shift+clic).",
+                 font=FS, bg=CARD, fg=MUTED, anchor="w").grid(
+            row=2, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 2))
+
         self.lblArchivos = tk.Label(
             ca, text="Sin archivos seleccionados",
             font=FS, bg=CARD, fg=MUTED, anchor="w")
-        self.lblArchivos.grid(row=2, column=0, columnspan=4,
+        self.lblArchivos.grid(row=3, column=0, columnspan=4,
                               sticky="ew", padx=14, pady=(0, 2))
 
-        # listbox con scrollbar
         fl = tk.Frame(ca, bg=CARD)
-        fl.grid(row=3, column=0, columnspan=4,
+        fl.grid(row=4, column=0, columnspan=4,
                 sticky="ew", padx=14, pady=(0, 4))
         fl.grid_columnconfigure(0, weight=1)
 
@@ -191,10 +203,9 @@ class AnalizadorApp:
         tk.Label(ca,
                  text="Clic derecho sobre un archivo para eliminarlo de la lista.",
                  font=FS, bg=CARD, fg=MUTED).grid(
-            row=4, column=0, columnspan=4,
+            row=5, column=0, columnspan=4,
             sticky="w", padx=14, pady=(0, 8))
 
-        # menu contextual para eliminar archivo individual
         self._menu_arch = tk.Menu(self.ventana, tearoff=0)
         self._menu_arch.add_command(
             label="Eliminar archivo seleccionado",
@@ -223,7 +234,6 @@ class AnalizadorApp:
         cd = make_card(self.ventana, row=5, pady=(4, 4))
         cd.grid_columnconfigure(1, weight=1)
 
-        # titulo + badge contador
         th = tk.Frame(cd, bg=CARD)
         th.grid(row=0, column=0, columnspan=4,
                 sticky="ew", padx=14, pady=(10, 6))
@@ -233,8 +243,11 @@ class AnalizadorApp:
             th, text="  0 busquedas  ", font=FS,
             bg=BADGE_BG, fg=BADGE_FG, padx=6, pady=2)
         self.badge.pack(side="left", padx=(10, 0))
+        self.badge_encontrados = tk.Label(
+            th, text="  0 agregados a resultados  ", font=FS,
+            bg="#F0FDF4", fg=TEAL, padx=6, pady=2)
+        self.badge_encontrados.pack(side="left", padx=(6, 0))
 
-        # entrada con historial desplegable
         tk.Label(cd, text="DOI:", font=FLB,
                  bg=CARD, fg=TEXT).grid(
             row=1, column=0, padx=(14, 6), pady=6, sticky="w")
@@ -253,7 +266,6 @@ class AnalizadorApp:
             row=1, column=3, padx=(0, 14), pady=6, sticky="e")
         self.btnCopiarDoi.config(state=tk.DISABLED)
 
-        # panel resultado con color dinamico
         self.panelDoi = tk.Frame(
             cd, bg="#F8FAFC",
             highlightthickness=1, highlightbackground=BORDER)
@@ -287,20 +299,19 @@ class AnalizadorApp:
         self.resultadosTexto.config(state=tk.DISABLED)
 
         T = self.resultadosTexto
-        T.tag_config("sec",  font=("Segoe UI", 10, "bold"), foreground=ACCENT)
-        T.tag_config("doi",  foreground=PURPLE, font=FM)
-        T.tag_config("tit",  foreground=TEXT)
-        T.tag_config("arc",  foreground=MUTED, font=FS)
-        T.tag_config("warn", foreground=WARN,
+        T.tag_config("sec",    font=("Segoe UI", 10, "bold"), foreground=ACCENT)
+        T.tag_config("sec_ok", font=("Segoe UI", 10, "bold"), foreground=TEAL)
+        T.tag_config("doi",    foreground=PURPLE, font=FM)
+        T.tag_config("tit",    foreground=TEXT)
+        T.tag_config("arc",    foreground=MUTED, font=FS)
+        T.tag_config("warn",   foreground=WARN,
                      font=("Segoe UI", 9, "bold"))
-        T.tag_config("num",  foreground=ACCENT2,
+        T.tag_config("num",    foreground=ACCENT2,
+                     font=("Segoe UI", 9, "bold"))
+        T.tag_config("num_ok", foreground=TEAL,
                      font=("Segoe UI", 9, "bold"))
 
     def _build_acumulado(self):
-        """
-        Seccion que muestra todos los DOIs unicos encontrados durante
-        la sesion, acumulando cada nuevo analisis sin borrar los anteriores.
-        """
         make_sep(self.ventana, 9)
 
         ah = tk.Frame(self.ventana, bg=BG)
@@ -379,18 +390,34 @@ class AnalizadorApp:
         self.badge.config(
             text=f"  {n} busqueda{'s' if n != 1 else ''}  ")
 
+    def _upd_badge_encontrados(self):
+        n = self._n_encontrados
+        self.badge_encontrados.config(
+            text=f"  {n} agregado{'s' if n != 1 else ''} a resultados  ")
+
     # ================================================================== ARCHIVOS
 
     def seleccionArchivo(self, _=None):
-        ruta = filedialog.askopenfilename(
-            title="Seleccionar CSV",
+        """
+        Permite seleccionar MULTIPLES archivos CSV a la vez.
+        Los que ya existen en la lista no se duplican.
+        """
+        rutas = filedialog.askopenfilenames(
+            title="Seleccionar CSV(s)",
             filetypes=[("CSV", "*.csv")],
             initialdir=".")
-        if ruta and ruta not in self.archivoRuta:
-            self.archivoRuta.append(ruta)
+        if not rutas:
+            return
+        nuevos = 0
+        for ruta in rutas:
+            if ruta not in self.archivoRuta:
+                self.archivoRuta.append(ruta)
+                nuevos += 1
+        if nuevos:
             self._upd_lista()
             self._bloquear("CSV")
-            self._set_status(f"Archivo agregado: {os.path.basename(ruta)}")
+            self._set_status(
+                f"{nuevos} archivo(s) CSV agregado(s).")
 
     def limpiarSeleccion(self):
         self.archivoRuta = []
@@ -408,6 +435,9 @@ class AnalizadorApp:
         self._upd_badge()
         self._doi_color("empty")
         self.btnCopiarDoi.config(state=tk.DISABLED)
+        self._dois_buscados = {}
+        self._n_encontrados = 0
+        self._upd_badge_encontrados()
         self._set_status("Seleccion limpiada.")
 
     def _upd_lista(self):
@@ -447,90 +477,120 @@ class AnalizadorApp:
     # ================================================================== CONVERTIDORES
 
     def convertidorRI(self):
-        f = filedialog.askopenfilename(
-            title="Seleccionar RIS",
+        """
+        Permite seleccionar MULTIPLES archivos RIS a la vez.
+        Cada uno se convierte y se agrega a la lista sin borrar
+        los archivos ya convertidos.
+        """
+        rutas = filedialog.askopenfilenames(
+            title="Seleccionar RIS(s)",
             filetypes=[("RIS", "*.ris")],
             initialdir=".")
-        if not f:
+        if not rutas:
             return
-        nombre = os.path.basename(f)
-        with open(f, 'r', encoding='utf-8') as ar:
-            leer = ar.read()
-        registros = re.split(r'\n(?=TY\s+-)', leer)
-        referencias, todoCam = [], set()
-        for registro in registros:
-            if not registro.strip():
-                continue
-            ref = defaultdict(list)
-            campo_actual = None
-            for linea in registro.strip().split('\n'):
-                m = re.match(r'^([A-Z0-9]{2})\s+-\s+(.+)$', linea)
-                if m:
-                    campo_actual, valor = m.groups()
-                    ref[campo_actual].append(valor)
-                    todoCam.add(campo_actual)
-                elif campo_actual and linea.strip():
-                    ref[campo_actual][-1] += ' ' + linea.strip()
-            if ref:
-                referencias.append(ref)
-        ordenCampos = sorted(todoCam)
-        csv_nombre  = f"{nombre[:-4]}.csv"
-        csv_ruta    = os.path.join(os.path.dirname(f), csv_nombre)
-        with open(csv_ruta, 'w', encoding='utf-8', newline='') as out:
-            w = cs.DictWriter(out, fieldnames=ordenCampos)
-            w.writeheader()
-            for ref in referencias:
-                w.writerow(
-                    {c: ' ; '.join(ref.get(c, [])) for c in ordenCampos})
-        self.archivoRuta = [csv_ruta]
-        self._upd_lista()
-        messagebox.showinfo("Conversion lista",
-                            f"CSV creado:\n\n{csv_nombre}")
-        self._bloquear("RIS")
-        self._set_status(f"RIS convertido: {csv_nombre}")
+
+        convertidos = []
+        for f in rutas:
+            nombre = os.path.basename(f)
+            try:
+                with open(f, 'r', encoding='utf-8') as ar:
+                    leer = ar.read()
+                registros = re.split(r'\n(?=TY\s+-)', leer)
+                referencias, todoCam = [], set()
+                for registro in registros:
+                    if not registro.strip():
+                        continue
+                    ref = defaultdict(list)
+                    campo_actual = None
+                    for linea in registro.strip().split('\n'):
+                        m = re.match(r'^([A-Z0-9]{2})\s+-\s+(.+)$', linea)
+                        if m:
+                            campo_actual, valor = m.groups()
+                            ref[campo_actual].append(valor)
+                            todoCam.add(campo_actual)
+                        elif campo_actual and linea.strip():
+                            ref[campo_actual][-1] += ' ' + linea.strip()
+                    if ref:
+                        referencias.append(ref)
+                ordenCampos = sorted(todoCam)
+                csv_nombre  = f"{nombre[:-4]}.csv"
+                csv_ruta    = os.path.join(os.path.dirname(f), csv_nombre)
+                with open(csv_ruta, 'w', encoding='utf-8', newline='') as out:
+                    w = cs.DictWriter(out, fieldnames=ordenCampos)
+                    w.writeheader()
+                    for ref in referencias:
+                        w.writerow(
+                            {c: ' ; '.join(ref.get(c, [])) for c in ordenCampos})
+                if csv_ruta not in self.archivoRuta:
+                    self.archivoRuta.append(csv_ruta)
+                convertidos.append(csv_nombre)
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo convertir {nombre}:\n{e}")
+
+        if convertidos:
+            self._upd_lista()
+            self._bloquear("RIS")
+            messagebox.showinfo(
+                "Conversion lista",
+                f"Archivos CSV creados:\n\n" + "\n".join(convertidos))
+            self._set_status(f"{len(convertidos)} archivo(s) RIS convertido(s).")
 
     def convertidorBIB(self):
-        f = filedialog.askopenfilename(
-            title="Seleccionar BIB",
+        """
+        Permite seleccionar MULTIPLES archivos BIB a la vez.
+        """
+        rutas = filedialog.askopenfilenames(
+            title="Seleccionar BIB(s)",
             filetypes=[("BIB", "*.bib")],
             initialdir=".")
-        if not f:
+        if not rutas:
             return
-        nombre   = os.path.basename(f)
-        csv_ruta = os.path.join(os.path.dirname(f),
-                                f"{nombre[:-4]}.csv")
-        with open(f, 'r', encoding='utf-8') as ar:
-            bib = bibtexparser.load(ar)
-        if not bib.entries:
-            messagebox.showwarning("Archivo vacio",
-                                   "No hay entradas en el BIB.")
-            return
-        todoCam = set()
-        for e in bib.entries:
-            todoCam.update(e.keys())
-        campos = list(todoCam)
-        orden  = []
-        for fijo in ["ID", "ENTRYTYPE"]:
-            if fijo in campos:
-                orden.append(fijo)
-                campos.remove(fijo)
-        orden.extend(sorted(campos))
-        with open(csv_ruta, 'w', encoding='utf-8', newline='') as out:
-            w = cs.DictWriter(out, fieldnames=orden)
-            w.writeheader()
-            for e in bib.entries:
-                w.writerow(e)
-        self.archivoRuta = [csv_ruta]
-        self._upd_lista()
-        messagebox.showinfo("Conversion lista",
-                            f"CSV creado:\n\n{nombre[:-4]}.csv")
-        self._bloquear("BIB")
-        self._set_status(f"BIB convertido: {nombre[:-4]}.csv")
+
+        convertidos = []
+        for f in rutas:
+            nombre   = os.path.basename(f)
+            csv_ruta = os.path.join(os.path.dirname(f),
+                                    f"{nombre[:-4]}.csv")
+            try:
+                with open(f, 'r', encoding='utf-8') as ar:
+                    bib = bibtexparser.load(ar)
+                if not bib.entries:
+                    messagebox.showwarning(
+                        "Archivo vacio",
+                        f"No hay entradas en:\n{nombre}")
+                    continue
+                todoCam = set()
+                for e in bib.entries:
+                    todoCam.update(e.keys())
+                campos = list(todoCam)
+                orden  = []
+                for fijo in ["ID", "ENTRYTYPE"]:
+                    if fijo in campos:
+                        orden.append(fijo)
+                        campos.remove(fijo)
+                orden.extend(sorted(campos))
+                with open(csv_ruta, 'w', encoding='utf-8', newline='') as out:
+                    w = cs.DictWriter(out, fieldnames=orden)
+                    w.writeheader()
+                    for e in bib.entries:
+                        w.writerow(e)
+                if csv_ruta not in self.archivoRuta:
+                    self.archivoRuta.append(csv_ruta)
+                convertidos.append(f"{nombre[:-4]}.csv")
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo convertir {nombre}:\n{e}")
+
+        if convertidos:
+            self._upd_lista()
+            self._bloquear("BIB")
+            messagebox.showinfo(
+                "Conversion lista",
+                f"Archivos CSV creados:\n\n" + "\n".join(convertidos))
+            self._set_status(f"{len(convertidos)} archivo(s) BIB convertido(s).")
 
     # ================================================================== ANALISIS
 
     def _detectar_motor(self, ruta):
-        """Detecta el motor de busqueda por las cabeceras del CSV."""
         try:
             with open(ruta, 'r', encoding='utf-8') as f:
                 campos = [c.strip().lower()
@@ -542,6 +602,8 @@ class AnalizadorApp:
                         and "title" in campos
                         and "doi" in campos)):
                 return "ACM"
+            # Science Direct exportado como RIS-to-CSV tiene campo "do" para DOI
+            # y "ti" o "t1" o "source title" para titulo
             if "ti" in campos or "t1" in campos or "source title" in campos:
                 return "SD"
             return "IEEE"
@@ -556,7 +618,7 @@ class AnalizadorApp:
         motor = self._detectar_motor(self.archivoRuta[0])
         campos_titulo = {
             "IEEE": ["Document Title", "Title", "title"],
-            "SD":   ["TI", "T1", "Title", "title"],
+            "SD":   ["TI", "T1", "Title", "title", "Source Title"],
             "ACM":  ["title", "Title"],
         }.get(motor, ["title", "Title", "Document Title"])
         self._set_status(f"Analizando con perfil: {motor} ...")
@@ -566,6 +628,7 @@ class AnalizadorApp:
         self.doi_repetidos = {}
         self.doi_unicos    = {}
         agrupado = defaultdict(lambda: {"titulos": [], "archivos": []})
+        archivos_sin_doi   = []
 
         for ruta in archivos:
             nombre = os.path.basename(ruta)
@@ -574,12 +637,10 @@ class AnalizadorApp:
                     leer   = cs.DictReader(f)
                     campos = leer.fieldnames or []
 
-                    campoDoi = next(
-                        (c for c in campos if 'doi' in c.strip().lower()),
-                        None)
+                    # ── DETECCION ROBUSTA DEL CAMPO DOI ──────────────────
+                    campoDoi = _hallar_campo_doi(campos)
                     if not campoDoi:
-                        messagebox.showerror(
-                            "Error", f"Sin campo DOI en:\n{nombre}")
+                        archivos_sin_doi.append(nombre)
                         continue
 
                     campoTit = None
@@ -597,14 +658,20 @@ class AnalizadorApp:
                         doi = fila.get(campoDoi, '').strip()
                         tit = (fila.get(campoTit, '').strip()
                                if campoTit else 'Sin titulo')
-                        if doi and doi.lower() not in \
-                                ['', 'n/a', 'na', 'none', 'null']:
+                        if _es_doi_valido(doi):
                             agrupado[doi]["titulos"].append(tit)
                             agrupado[doi]["archivos"].append(nombre)
             except Exception as e:
                 messagebox.showerror(
                     "Error de lectura",
                     f"No se pudo leer {nombre}:\n{e}")
+
+        # Avisar de archivos sin DOI identificable (pero continuar)
+        if archivos_sin_doi:
+            messagebox.showwarning(
+                "Campo DOI no encontrado",
+                "Los siguientes archivos no tienen una columna DOI reconocible "
+                "y fueron omitidos:\n\n" + "\n".join(archivos_sin_doi))
 
         for doi, d in agrupado.items():
             if len(d["titulos"]) > 1:
@@ -630,16 +697,19 @@ class AnalizadorApp:
         T.config(state=tk.NORMAL)
         T.delete(1.0, tk.END)
 
-        if not self.doi_repetidos and not self.doi_unicos:
+        if not self.doi_repetidos and not self.doi_unicos \
+                and not self._dois_buscados:
             T.insert(tk.END, "No se encontraron articulos.\n")
             T.config(state=tk.DISABLED)
             return
 
         total = len(self.doi_repetidos) + len(self.doi_unicos)
+        extra = len(self._dois_buscados)
         self.lblStats.config(
-            text=(f"{total} DOIs totales"
+            text=(f"{total} DOIs analizados"
                   f"  /  {len(self.doi_repetidos)} repetidos"
-                  f"  /  {len(self.doi_unicos)} unicos"))
+                  f"  /  {len(self.doi_unicos)} unicos"
+                  + (f"  /  {extra} via buscador" if extra else "")))
 
         T.insert(tk.END,
                  f"DOIs REPETIDOS ({len(self.doi_repetidos)})\n", "sec")
@@ -662,10 +732,27 @@ class AnalizadorApp:
                  f"DOIs UNICOS ({len(self.doi_unicos)})\n", "sec")
         T.insert(tk.END, "-" * 64 + "\n")
         if not self.doi_unicos:
-            T.insert(tk.END, "  Ninguno\n")
+            T.insert(tk.END, "  Ninguno\n\n")
         else:
             for i, (doi, d) in enumerate(self.doi_unicos.items(), 1):
                 T.insert(tk.END, f"  {i:>4}. ", "num")
+                T.insert(tk.END, f"{d['titulo']}\n", "tit")
+                T.insert(tk.END, "         DOI: ", "arc")
+                T.insert(tk.END, f"{doi}\n", "doi")
+                T.insert(tk.END,
+                         f"         Archivo: {d['archivo']}\n\n", "arc")
+
+        T.insert(tk.END,
+                 f"ENCONTRADOS POR BUSQUEDA DOI ({len(self._dois_buscados)})\n",
+                 "sec_ok")
+        T.insert(tk.END, "-" * 64 + "\n")
+        if not self._dois_buscados:
+            T.insert(tk.END,
+                     "  Ninguno todavia."
+                     " Usa el buscador DOI para agregar articulos aqui.\n")
+        else:
+            for i, (doi, d) in enumerate(self._dois_buscados.items(), 1):
+                T.insert(tk.END, f"  {i:>4}. ", "num_ok")
                 T.insert(tk.END, f"{d['titulo']}\n", "tit")
                 T.insert(tk.END, "         DOI: ", "arc")
                 T.insert(tk.END, f"{doi}\n", "doi")
@@ -677,10 +764,6 @@ class AnalizadorApp:
     # ================================================================== ACUMULADO
 
     def _actualizar_acumulado(self):
-        """
-        Incorpora los DOIs unicos del analisis actual al acumulado
-        de la sesion. Los que ya existen no se duplican.
-        """
         nuevos = 0
         for doi, d in self.doi_unicos.items():
             if doi not in self.acumulado_dois:
@@ -707,10 +790,10 @@ class AnalizadorApp:
             return
 
         claves  = list(self.acumulado_dois.keys())
-        umbral  = len(claves) - nuevos_dois   # indices >= umbral son nuevos
+        umbral  = len(claves) - nuevos_dois
 
         for i, doi in enumerate(claves, 1):
-            d       = self.acumulado_dois[doi]
+            d        = self.acumulado_dois[doi]
             es_nuevo = (i - 1) >= umbral and nuevos_dois > 0
 
             A.insert(tk.END, f"  {i:>4}. ", "new" if es_nuevo else "num")
@@ -753,11 +836,12 @@ class AnalizadorApp:
                 with open(ruta, 'r', encoding='utf-8') as f:
                     leer   = cs.DictReader(f)
                     campos = leer.fieldnames or []
-                    campoDoi = next(
-                        (c for c in campos if 'doi' in c.strip().lower()),
-                        None)
+
+                    # ── DETECCION ROBUSTA DEL CAMPO DOI ──────────────────
+                    campoDoi = _hallar_campo_doi(campos)
                     if not campoDoi:
                         continue
+
                     campoTit = None
                     for posible in ["Title", "title", "Document Title",
                                     "TI", "T1"]:
@@ -769,20 +853,20 @@ class AnalizadorApp:
                             break
                     if not campoTit and campos:
                         campoTit = campos[0]
+
                     for fila in leer:
-                        df = fila.get(campoDoi, '').strip().lower()
-                        if df and df not in ['', 'n/a', 'na', 'none', 'null']:
-                            if doi_n in df or df in doi_n:
+                        df = fila.get(campoDoi, '').strip()
+                        if _es_doi_valido(df):
+                            if doi_n in df.lower() or df.lower() in doi_n:
                                 resultados.append({
                                     "archivo": nombre,
-                                    "doi":     fila.get(campoDoi, '').strip(),
+                                    "doi":     df,
                                     "titulo":  (fila.get(campoTit, 'Sin titulo')
                                                 if campoTit else 'Sin titulo'),
                                 })
             except Exception as e:
                 print(f"Error leyendo {nombre}: {e}")
 
-        # actualizar historial (sin duplicados, max 20)
         if doi_q not in self._historial_doi:
             self._historial_doi.insert(0, doi_q)
             self._historial_doi = self._historial_doi[:20]
@@ -812,6 +896,7 @@ class AnalizadorApp:
                 R.insert(tk.END, f"     DOI:     {r['doi']}\n")
                 R.insert(tk.END, f"     Archivo: {r['archivo']}\n\n")
             self.btnCopiarDoi.config(state=tk.NORMAL)
+            self._registrar_doi_buscado(resultados[0])
         else:
             self._doi_color("ok")
             r = resultados[0]
@@ -820,14 +905,27 @@ class AnalizadorApp:
             R.insert(tk.END, f"  DOI:     {r['doi']}\n")
             R.insert(tk.END, f"  Archivo: {r['archivo']}\n")
             self.btnCopiarDoi.config(state=tk.NORMAL)
+            self._registrar_doi_buscado(r)
 
         R.config(state=tk.DISABLED)
         self._set_status(
             f"Busqueda '{doi_q}': "
             f"{len(resultados)} resultado{'s' if len(resultados) != 1 else ''}.")
 
+    def _registrar_doi_buscado(self, resultado):
+        doi = resultado["doi"]
+        if doi not in self._dois_buscados:
+            self._dois_buscados[doi] = {
+                "titulo":  resultado["titulo"],
+                "archivo": resultado["archivo"],
+            }
+            self._n_encontrados += 1
+            self._upd_badge_encontrados()
+
+        self._mostrarResultados()
+        self.btnExportar.config(state=tk.NORMAL)
+
     def _copiar_resultado_doi(self):
-        """Copia el texto del panel DOI al portapapeles del sistema."""
         contenido = self.txtDoi.get("1.0", tk.END).strip()
         if contenido:
             self.ventana.clipboard_clear()
@@ -837,7 +935,8 @@ class AnalizadorApp:
     # ================================================================== EXPORTAR
 
     def exportarResultados(self):
-        if not self.doi_unicos and not self.doi_repetidos:
+        if not self.doi_unicos and not self.doi_repetidos \
+                and not self._dois_buscados:
             messagebox.showwarning("Sin datos",
                                    "No hay resultados para exportar.")
             return
@@ -856,6 +955,9 @@ class AnalizadorApp:
             for doi, d in self.doi_repetidos.items():
                 for t, a in zip(d["titulos"], d["archivos"]):
                     w.writerow(["", t, doi, a, "Repetido"])
+            for i, (doi, d) in enumerate(self._dois_buscados.items(), 1):
+                w.writerow([i, d["titulo"], doi, d["archivo"],
+                            "Encontrado por busqueda"])
         messagebox.showinfo("Exportado",
                             f"Resultados guardados en:\n\n{out}")
         self._set_status(f"Exportado: {os.path.basename(out)}")
